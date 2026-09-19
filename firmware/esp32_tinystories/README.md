@@ -63,6 +63,12 @@ PORT=/dev/cu.usbmodemNNNN   # the port deploy.sh printed
 arduino-cli monitor -p "$PORT" --config baudrate=115200
 ```
 
+After boot, type a short English prompt such as `A little fox` in the serial
+monitor and press Enter. The model encodes printable ASCII input on-device and
+then streams the story over the same USB serial connection. It rejects Chinese,
+other non-ASCII text, empty prompts, and prompts that use all 128 context
+positions rather than silently generating from different tokens.
+
 The model payload only needs reflashing after a new export. Firmware-only changes
 can be uploaded without rewriting the model partition.
 

@@ -60,12 +60,16 @@ echo "PASS"
 """
 
 
+@unittest.skipIf(os.name == "nt", "Bash deploy harness needs a POSIX environment")
 class DeployHarness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name) / "repo"
         (self.repo / "scripts").mkdir(parents=True)
-        (self.repo / "scripts" / "deploy.sh").write_text(SCRIPT.read_text())
+        # Bash parses a CRLF line as part of its last token on Windows. Keep the
+        # copied script executable regardless of the host test platform.
+        (self.repo / "scripts" / "deploy.sh").write_text(
+            SCRIPT.read_text(), newline="\n")
         os.chmod(self.repo / "scripts" / "deploy.sh", 0o755)
 
         # Only the paths deploy.sh reads have to exist.
@@ -201,8 +205,9 @@ class ModelSelectionPicksMatchingParts(DeployHarness):
         self.assertEqual(self.run_deploy("tinystories").returncode, 0)
         joined = "\n".join(self.calls())
         self.assertIn("esp32_tinystories/tools/generate_vocab.py", joined)
+        self.assertIn("esp32_barista/tools/generate_tokenizer_header.py", joined)
         self.assertIn("firmware/esp32_tinystories", joined)
-        self.assertNotIn("esp32_barista", joined)
+        self.assertNotIn("firmware/esp32_barista/esp32_barista.ino", joined)
 
     def test_the_flashed_binary_is_the_selected_model(self):
         self.assertEqual(self.run_deploy("barista").returncode, 0)
@@ -298,7 +303,7 @@ class ToolsRunOutsideTheProjectEnvironment(DeployHarness):
                                    "vocab.json", "layout.json"])
 
     def test_no_uv_call_uses_the_project_environment(self):
-        for model, expected in (("barista", 3), ("tinystories", 1)):
+        for model, expected in (("barista", 3), ("tinystories", 2)):
             with self.subTest(model=model):
                 self.log.unlink(missing_ok=True)
                 self.assertEqual(self.run_deploy(model).returncode, 0)

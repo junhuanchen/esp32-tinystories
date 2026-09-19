@@ -98,7 +98,7 @@ esac
 prepare_headers() {
   case "$MODEL_KIND" in
     tinystories)
-      # Rebuild the decode header from the tokenizer being deployed, every time.
+      # Rebuild both headers from the tokenizer being deployed, every time.
       # The firmware only checks that VOCAB_N equals the model's output_vocab, so
       # a stale header from a different tokenizer with the same entry count would
       # pass that check and decode every token wrongly.
@@ -106,6 +106,10 @@ prepare_headers() {
       SHOW=wrote step 0 "generate vocab.h" \
         uv run --no-project --with 'tokenizers==0.23.1' python "$SKETCH/tools/generate_vocab.py" \
         --tokenizer "$TOKENIZER" --out "$SKETCH/generated/vocab.h"
+      echo "=== generate encoder asset from $TOKENIZER ==="
+      SHOW=wrote step 0 "generate tokenizer encoder" \
+        uv run --no-project python firmware/esp32_barista/tools/generate_tokenizer_header.py \
+        --tokenizer "$TOKENIZER" --out "$SKETCH/generated/tokenizer_encoder.h"
       ;;
     barista)
       echo "=== generate word tables from $VOCAB and $LAYOUT ==="

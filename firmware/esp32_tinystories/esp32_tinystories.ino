@@ -26,20 +26,22 @@
 #define LLM_PROFILE 1
 #define LLM_PROFILE_NOW() esp_timer_get_time()
 #include "../../runtime/llm.h"
+#include "../../runtime/bpe_tokenizer.h"
 #include "generated/vocab.h"
+#include "generated/tokenizer_encoder.h"
 
-// Set to 1 once a display is wired up - see display.h.
-// Leave 0 to run serial-only (no panel needed).
-#define USE_DISPLAY 1
+// This board's built-in AMOLED uses a different driver; leave the optional
+// external I2C OLED disabled and stream generation over USB serial.
+#define USE_DISPLAY 0
 #if USE_DISPLAY
 #include "display.h"
 #endif
 
-static const int PROMPT_IDS[] = {433, 447, 259, 405}; // "Once upon a time"
-static const int N_GENERATE = 200;
+static const int N_GENERATE = 508;
 
 Model model;
 Scratch s;
+BpeTokenizer tokenizer;
 
 // ---- allocation ------------------------------------------------------------
 // Allocations are strict because memory placement is part of the runtime
@@ -170,6 +172,88 @@ static void emit(int tok) {
 #endif
 }
 
+static void discard_prompt_line() {
+  for (;;) {
+    while (!Serial.available()) delay(10);
+    int c = Serial.read();
+    if (c == '\n') return;
+  }
+}
+
+// Read one printable-ASCII prompt from USB CDC. The on-device tokenizer
+// intentionally rejects non-ASCII instead of silently encoding it differently
+// from the tokenizer used to train this English-language model.
+static int read_prompt(char *out, int cap) {
+  int n = 0;
+  for (;;) {
+    while (!Serial.available()) delay(10);
+    int c = Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') { Serial.println(); out[n] = '\0'; return n; }
+    if (c < 0x20 || c >= 0x7f) {
+      Serial.println("\ninput must be printable ASCII");
+      discard_prompt_line();
+      return -1;
+    }
+    if (n + 1 >= cap) {
+      Serial.println("\nprompt is too long");
+      discard_prompt_line();
+      return -1;
+    }
+    out[n++] = (char)c;
+    Serial.write((uint8_t)c);
+  }
+}
+
+static void generate(const uint16_t *prompt_ids, int n_prompt) {
+  if (n_prompt >= model.c.seq_len) {
+    Serial.printf("prompt has %d tokens; limit is %d\n", n_prompt,
+                  model.c.seq_len - 1);
+    return;
+  }
+
+  Serial.print(">>> ");
+  int pos = 0, tok = 0;
+  int64_t decode_us = 0;
+  int decoded = 0;
+
+  for (int i = 0; i < n_prompt; i++) {
+    tok = prompt_ids[i];
+    emit(tok);
+    llm_forward(&model, tok, pos++, &s);
+  }
+
+  llm_profile_reset(&s);
+  int64_t t_start = esp_timer_get_time();
+  for (int step = 0; step < N_GENERATE && pos < model.c.seq_len; step++) {
+    int best = 0; float bv = -1e30f;
+    for (int v = 0; v < model.out_vocab; v++)
+      if (s.logits[v] > bv) { bv = s.logits[v]; best = v; }
+    tok = best;
+    emit(tok);
+    blink((step & 1) ? 40 : 8);
+
+    int64_t d0 = esp_timer_get_time();
+    llm_forward(&model, tok, pos++, &s);
+    decode_us += esp_timer_get_time() - d0;
+    decoded++;
+    if ((step & 7) == 0) delay(0);
+  }
+  int64_t total_us = esp_timer_get_time() - t_start;
+
+  Serial.printf("\n\n--- %d tokens in %.2f s ---\n", decoded, total_us / 1e6);
+  Serial.printf("throughput: %.2f tok/s   (%.1f ms/token)\n",
+                decoded * 1e6 / total_us, decode_us / 1000.0f / decoded);
+  if (s.profile.calls) {
+    float n = (float)s.profile.calls * 1000.f;
+    Serial.printf("profile ms/token: input %.1f | attn %.1f | ffn %.1f | ple %.1f | head %.1f\n",
+                  s.profile.input_us / n, s.profile.attn_us / n,
+                  s.profile.ffn_us / n, s.profile.ple_us / n,
+                  s.profile.head_us / n);
+  }
+  blink(0);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1500);
@@ -193,6 +277,17 @@ void setup() {
 #if USE_DISPLAY
   display_begin();
 #endif
+
+  if (bpe_tokenizer_load(TOKENIZER_ENCODER_ASSET,
+                         TOKENIZER_ENCODER_ASSET_SIZE, &tokenizer)) {
+    Serial.println("bad tokenizer encoder asset");
+    return;
+  }
+  if (tokenizer.active_vocab != (uint32_t)c->vocab) {
+    Serial.printf("FATAL: tokenizer/model mismatch: encoder %u, model %d\n",
+                  (unsigned)tokenizer.active_vocab, c->vocab);
+    return;
+  }
 
   // The model header states how many logits it produces; vocab.h carries the
   // decode table. If they disagree, every emitted token would be decoded
@@ -250,52 +345,23 @@ void setup() {
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0,
                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1048576.0);
 
-  // ---- generate ----
-  Serial.print(">>> ");
-  int n_prompt = sizeof(PROMPT_IDS) / sizeof(int);
-  int pos = 0, tok = 0;
-  int64_t decode_us = 0;
-  int decoded = 0;
-
-  for (int i = 0; i < n_prompt; i++) {  // prime with the prompt
-    tok = PROMPT_IDS[i];
-    emit(tok);
-    llm_forward(&model, tok, pos++, &s);
-  }
-
-  llm_profile_reset(&s);
-
-  int64_t t_start = esp_timer_get_time();
-  for (int step = 0; step < N_GENERATE && pos < model.c.seq_len; step++) {
-    int best = 0; float bv = -1e30f;
-    for (int v = 0; v < model.out_vocab; v++)
-      if (s.logits[v] > bv) { bv = s.logits[v]; best = v; }
-    tok = best;
-    emit(tok);
-    blink((step & 1) ? 40 : 8);
-
-    int64_t d0 = esp_timer_get_time();
-    llm_forward(&model, tok, pos++, &s);
-    decode_us += esp_timer_get_time() - d0;
-    decoded++;
-    if ((step & 7) == 0) delay(0);  // feed the task WDT ~every 8 tokens
-  }
-  int64_t total_us = esp_timer_get_time() - t_start;
-
-  Serial.printf("\n\n--- %d tokens in %.2f s ---\n", decoded, total_us / 1e6);
-  Serial.printf("throughput: %.2f tok/s   (%.1f ms/token)\n",
-                decoded * 1e6 / total_us, decode_us / 1000.0 / decoded);
-  if (s.profile.calls) {
-    float n = (float)s.profile.calls * 1000.f;
-    Serial.printf("profile ms/token: input %.1f | attn %.1f | ffn %.1f | ple %.1f | head %.1f\n",
-                  s.profile.input_us / n, s.profile.attn_us / n,
-                  s.profile.ffn_us / n, s.profile.ple_us / n,
-                  s.profile.head_us / n);
-  }
-#if USE_DISPLAY
-  display_stats(decoded * 1e6f / decode_us, decode_us / 1000.0f / decoded);
-#endif
-  blink(0);
+  Serial.println("type an English prompt and press Enter");
 }
 
-void loop() { delay(10000); }
+void loop() {
+  char prompt[BTK_MAX_INPUT_BYTES + 1];
+  uint16_t prompt_ids[BTK_MAX_INPUT_BYTES];
+  Serial.print("prompt> ");
+  int bytes = read_prompt(prompt, sizeof(prompt));
+  if (bytes <= 0) {
+    if (bytes == 0) Serial.println("prompt must not be empty");
+    return;
+  }
+  int n_prompt = bpe_encode_ascii(&tokenizer, prompt, prompt_ids,
+                                  BTK_MAX_INPUT_BYTES);
+  if (n_prompt < 0) {
+    Serial.printf("tokenizer rejected prompt: %d\n", n_prompt);
+    return;
+  }
+  generate(prompt_ids, n_prompt);
+}

@@ -77,6 +77,19 @@ scripts/deploy.sh barista        # generate headers, run gates, compile, flash
 the model to be named, because the board holds one at a time and deploying
 replaces it.
 
+### Windows PowerShell
+
+On Windows, use the PowerShell equivalents (with the board's COM port):
+
+```powershell
+.\scripts\fetch_model.ps1 -ModelKind tinystories
+.\scripts\deploy.ps1 -ModelKind tinystories -Port COM5
+```
+
+The fetch step downloads to a temporary directory and verifies the pinned
+SHA-256 hashes before replacing `artifacts/tinystories/`. The deploy step then
+builds and flashes the board; it replaces the firmware currently on the board.
+
 `fetch_model.sh` checks the inference assets against a SHA-256 and byte size
 pinned in the script, and cross-checks the release's own `metadata.json` against
 those same pins. It installs nothing unless every check passes, so a failed

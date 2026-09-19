@@ -24,3 +24,7 @@ videos/
 *.mov
 *.MOV
 *.MP4
+.vscode/settings.json
+
+build
+idf/build/

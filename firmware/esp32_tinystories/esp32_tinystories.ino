@@ -37,7 +37,11 @@
 #include "display.h"
 #endif
 
+// Leave a small tail of the context for a natural English sentence ending.
+// This remains a hard upper limit: a prompt plus its continuation never exceeds
+// the model's context window.
 static const int N_GENERATE = 508;
+static const int ENDING_WINDOW = 32;
 
 Model model;
 Scratch s;
@@ -172,6 +176,17 @@ static void emit(int tok) {
 #endif
 }
 
+// The TinyStories model writes raw English UTF-8 bytes. Near the output limit,
+// stop after a token whose final byte closes a sentence instead of always
+// exhausting the context in the middle of one.
+static bool token_ends_sentence(int tok) {
+  if (tok < 0 || tok >= VOCAB_N) return false;
+  int end = VOCAB_OFF[tok + 1];
+  if (end <= VOCAB_OFF[tok]) return false;
+  unsigned char last = VOCAB_BLOB[end - 1];
+  return last == '.' || last == '!' || last == '?';
+}
+
 static void discard_prompt_line() {
   for (;;) {
     while (!Serial.available()) delay(10);
@@ -225,7 +240,12 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
 
   llm_profile_reset(&s);
   int64_t t_start = esp_timer_get_time();
-  for (int step = 0; step < N_GENERATE && pos < model.c.seq_len; step++) {
+  int max_generate = N_GENERATE;
+  int room = model.c.seq_len - pos;
+  if (max_generate > room) max_generate = room;
+  int ending_from = max_generate - ENDING_WINDOW;
+  if (ending_from < 0) ending_from = 0;
+  for (int step = 0; step < max_generate; step++) {
     int best = 0; float bv = -1e30f;
     for (int v = 0; v < model.out_vocab; v++)
       if (s.logits[v] > bv) { bv = s.logits[v]; best = v; }
@@ -237,6 +257,7 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
     llm_forward(&model, tok, pos++, &s);
     decode_us += esp_timer_get_time() - d0;
     decoded++;
+    if (decoded >= ending_from && token_ends_sentence(tok)) break;
     if ((step & 7) == 0) delay(0);
   }
   int64_t total_us = esp_timer_get_time() - t_start;

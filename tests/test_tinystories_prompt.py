@@ -30,6 +30,12 @@ class TinyStoriesPromptContract(unittest.TestCase):
         self.assertIn("bpe_encode_ascii(&tokenizer, prompt, prompt_ids", self.sketch)
         self.assertIn("generate(prompt_ids, n_prompt)", self.sketch)
 
+    def test_generation_uses_an_english_sentence_boundary_near_its_limit(self):
+        self.assertIn("static const int ENDING_WINDOW = 32", self.sketch)
+        self.assertIn("static bool token_ends_sentence", self.sketch)
+        self.assertIn("last == '.' || last == '!' || last == '?'", self.sketch)
+        self.assertIn("decoded >= ending_from && token_ends_sentence(tok)", self.sketch)
+
     def test_deploy_generates_the_asset_from_the_selected_tokenizer(self):
         self.assertIn("generate tokenizer encoder", self.deploy)
         self.assertIn("generate_tokenizer_header.py", self.deploy)

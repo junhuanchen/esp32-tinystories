@@ -1,0 +1,21 @@
+{
+  "folders": [
+    {
+      "path": ".",
+      "name": "esp32-ai"
+    },
+    {
+      "path": "idf",
+      "name": "TinyStories IDF"
+    }
+  ],
+  "settings": {
+    "idf.currentSetup": "C:\\esp\\v5.5.5\\esp-idf",
+    "idf.espIdfPathWin": "C:\\esp\\v5.5.5\\esp-idf",
+    "idf.toolsPathWin": "C:\\Espressif\\tools",
+    "idf.portWin": "COM3",
+    "idf.customExtraVars": {
+      "IDF_TARGET": "esp32s3"
+    }
+  }
+}

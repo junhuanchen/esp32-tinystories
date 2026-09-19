@@ -7,12 +7,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT/idf"
 FLASH=0
 MONITOR=0
+CLEAN=0
 PORT=""
 IDF_DIR="${IDF_PATH:-}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/build_idf.sh [--flash --port /dev/ttyACM0 [--monitor]] [--idf-path PATH]
+usage: scripts/build_idf.sh [--clean] [--flash --port /dev/ttyACM0 [--monitor]] [--idf-path PATH]
 
 Builds the ESP-IDF TinyStories firmware. --flash is required before any board
 write; it flashes both the firmware and the model partition.
@@ -24,6 +25,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --flash) FLASH=1 ;;
     --monitor) MONITOR=1 ;;
+    --clean) CLEAN=1 ;;
     --port) shift; [ "$#" -gt 0 ] || usage; PORT=$1 ;;
     --idf-path) shift; [ "$#" -gt 0 ] || usage; IDF_DIR=$1 ;;
     -h|--help) usage ;;
@@ -46,6 +48,7 @@ fi
 command -v idf.py >/dev/null 2>&1 || { echo "ESP-IDF activation did not provide idf.py" >&2; exit 1; }
 
 cd "$PROJECT"
+if [ "$CLEAN" -eq 1 ]; then idf.py fullclean; fi
 idf.py set-target esp32s3
 idf.py build
 

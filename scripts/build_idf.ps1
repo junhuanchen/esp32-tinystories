@@ -3,6 +3,7 @@ param(
   [string]$Port,
   [switch]$Flash,
   [switch]$Monitor,
+  [switch]$Clean,
   [string]$IdfPath = $env:IDF_PATH
 )
 
@@ -30,13 +31,20 @@ if (-not $IdfPath -or -not (Test-Path -LiteralPath (Join-Path $IdfPath 'export.p
   throw 'ESP-IDF was not found. Install ESP-IDF, or pass -IdfPath C:\path\to\esp-idf.'
 }
 
-. (Join-Path $IdfPath 'export.ps1')
 if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
-  throw "ESP-IDF activation did not provide idf.py: $IdfPath"
+  . (Join-Path $IdfPath 'export.ps1')
+  if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
+    throw "ESP-IDF activation did not provide idf.py: $IdfPath"
+  }
 }
 
 Push-Location $Project
 try {
+  if ($Clean) {
+    & idf.py fullclean
+    if ($LASTEXITCODE -ne 0) { throw 'failed: idf.py fullclean' }
+  }
+
   & idf.py set-target esp32s3
   if ($LASTEXITCODE -ne 0) { throw 'failed: idf.py set-target esp32s3' }
 

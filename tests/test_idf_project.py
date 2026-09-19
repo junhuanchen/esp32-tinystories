@@ -24,11 +24,18 @@ class IdfProjectContract(unittest.TestCase):
         text = (IDF / "partitions.csv").read_text(encoding="utf-8")
         self.assertIn("model,     data, 0x40,    0x110000,  0xEE0000", text)
 
+    def test_sdkconfig_selects_the_custom_partition_table(self):
+        text = (IDF / "sdkconfig.defaults").read_text(encoding="utf-8")
+        self.assertIn("CONFIG_PARTITION_TABLE_CUSTOM=y", text)
+        self.assertIn('CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"', text)
+
     def test_build_generates_headers_and_flashes_model(self):
-        text = (IDF / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn("generate_vocab.py", text)
-        self.assertIn("generate_tokenizer_header.py", text)
-        self.assertIn('esptool_py_flash_to_partition(flash "model"', text)
+        main = (IDF / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+        project = (IDF / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("if(NOT CMAKE_SCRIPT_MODE_FILE)", main)
+        self.assertIn("generate_vocab.py", main)
+        self.assertIn("generate_tokenizer_header.py", main)
+        self.assertIn('esptool_py_flash_to_partition(flash "model"', project)
 
     def test_entrypoint_uses_usb_serial_jtag_not_arduino(self):
         text = (IDF / "main" / "main.cpp").read_text(encoding="utf-8")
@@ -39,6 +46,9 @@ class IdfProjectContract(unittest.TestCase):
     def test_build_script_makes_flashing_explicit(self):
         text = BUILD.read_text(encoding="utf-8")
         self.assertIn("[switch]$Flash", text)
+        self.assertIn("[switch]$Clean", text)
+        self.assertIn("& idf.py fullclean", text)
+        self.assertIn("if (-not (Get-Command idf.py -ErrorAction SilentlyContinue))", text)
         self.assertIn("-Flash requires -Port COMx", text)
         self.assertIn("& idf.py build", text)
         self.assertIn("& idf.py -p $Port flash", text)
@@ -46,6 +56,8 @@ class IdfProjectContract(unittest.TestCase):
     def test_linux_build_script_makes_flashing_explicit(self):
         text = BUILD_LINUX.read_text(encoding="utf-8")
         self.assertIn("FLASH=0", text)
+        self.assertIn("CLEAN=0", text)
+        self.assertIn("idf.py fullclean", text)
         self.assertIn("idf.py build", text)
         self.assertIn('idf.py -p "$PORT" flash', text)
         self.assertIn("--flash requires --port", text)

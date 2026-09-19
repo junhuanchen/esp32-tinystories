@@ -35,6 +35,10 @@ class UsbSerialJtag {
   size_t write(uint8_t byte) { return write(&byte, 1); }
 
   size_t write(const unsigned char *data, size_t length) {
+    // ESP-IDF rejects zero-size USB-JTAG writes. Some valid decoded BPE tokens
+    // are empty byte spans, so make them a no-op at the Arduino-compatible
+    // boundary instead of emitting a driver error for every such token.
+    if (data == nullptr || length == 0) return 0;
     int written = usb_serial_jtag_write_bytes(
         reinterpret_cast<const char *>(data), length, portMAX_DELAY);
     return written > 0 ? static_cast<size_t>(written) : 0;

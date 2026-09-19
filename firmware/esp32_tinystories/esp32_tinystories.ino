@@ -199,11 +199,23 @@ static void discard_prompt_line() {
 // intentionally rejects non-ASCII instead of silently encoding it differently
 // from the tokenizer used to train this English-language model.
 static int read_prompt(char *out, int cap) {
+  // Windows serial monitors commonly submit CR, whereas terminals usually
+  // submit LF. Remember a completed CR so its optional LF partner is not
+  // interpreted as an empty prompt on the next call.
+  static bool skip_lf_after_cr = false;
   int n = 0;
   for (;;) {
     while (!Serial.available()) delay(10);
     int c = Serial.read();
-    if (c == '\r') continue;
+    if (skip_lf_after_cr && c == '\n') {
+      skip_lf_after_cr = false;
+      continue;
+    }
+    skip_lf_after_cr = false;
+    if (c == '\r') {
+      skip_lf_after_cr = true;
+      Serial.println(); out[n] = '\0'; return n;
+    }
     if (c == '\n') { Serial.println(); out[n] = '\0'; return n; }
     if (c < 0x20 || c >= 0x7f) {
       Serial.println("\ninput must be printable ASCII");
@@ -304,15 +316,17 @@ void setup() {
     Serial.println("bad tokenizer encoder asset");
     return;
   }
-  if (tokenizer.active_vocab != (uint32_t)c->vocab) {
-    Serial.printf("FATAL: tokenizer/model mismatch: encoder %u, model %d\n",
-                  (unsigned)tokenizer.active_vocab, c->vocab);
+  // Vin is an aligned input-embedding capacity and can be larger than the
+  // trained tokenizer. Every tokenizer id must fit Vin, while the encoder and
+  // decoder must exactly cover the logits the model emits.
+  if (tokenizer.active_vocab > (uint32_t)c->vocab ||
+      tokenizer.active_vocab != (uint32_t)model.out_vocab) {
+    Serial.printf("FATAL: tokenizer/model mismatch: encoder %u, Vin %d, Vout %d\n",
+                  (unsigned)tokenizer.active_vocab, c->vocab, model.out_vocab);
     return;
   }
 
-  // The model header states how many logits it produces; vocab.h carries the
-  // decode table. If they disagree, every emitted token would be decoded
-  // against the wrong table.
+  // vocab.h carries the decode table. It must cover every emitted logit.
   if (VOCAB_N != model.out_vocab) {
     Serial.printf("FATAL: tokenizer/model mismatch: vocab.h %d, model %d\n",
                   VOCAB_N, model.out_vocab);

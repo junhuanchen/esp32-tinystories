@@ -23,10 +23,15 @@ class TinyStoriesPromptContract(unittest.TestCase):
     def test_uses_a_generated_encoder_asset(self):
         self.assertIn('#include "generated/tokenizer_encoder.h"', self.sketch)
         self.assertIn("bpe_tokenizer_load(TOKENIZER_ENCODER_ASSET", self.sketch)
-        self.assertIn("tokenizer.active_vocab != (uint32_t)c->vocab", self.sketch)
+        self.assertIn("tokenizer.active_vocab > (uint32_t)c->vocab", self.sketch)
+        self.assertIn("tokenizer.active_vocab != (uint32_t)model.out_vocab", self.sketch)
+        self.assertIn("VOCAB_N != model.out_vocab", self.sketch)
 
     def test_serial_prompt_is_encoded_before_generation(self):
         self.assertIn("static int read_prompt", self.sketch)
+        self.assertIn("static bool skip_lf_after_cr = false", self.sketch)
+        self.assertIn("if (c == '\\r')", self.sketch)
+        self.assertIn("if (c == '\\n')", self.sketch)
         self.assertIn("bpe_encode_ascii(&tokenizer, prompt, prompt_ids", self.sketch)
         self.assertIn("generate(prompt_ids, n_prompt)", self.sketch)
 

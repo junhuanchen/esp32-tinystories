@@ -41,6 +41,7 @@ class IdfProjectContract(unittest.TestCase):
     def test_entrypoint_uses_usb_serial_jtag_not_arduino(self):
         text = (IDF / "main" / "main.cpp").read_text(encoding="utf-8")
         self.assertIn("usb_serial_jtag_driver_install", text)
+        self.assertIn("if (data == nullptr || length == 0) return 0;", text)
         self.assertIn('extern "C" void app_main(void)', text)
         self.assertNotIn("#include <Arduino.h>", text)
 

@@ -268,6 +268,25 @@ class TestEncodingContract(GeneratorCase):
         self.reject("added tokens are configured",
                     tokenizer(added_tokens=[{"id": 0, "content": "<pad>"}]))
 
+    def test_in_vocab_special_added_token_can_be_explicitly_allowed(self):
+        config = tokenizer(vocab_extra={"<eos>": 259},
+                           added_tokens=[{"id": 259, "content": "<eos>",
+                                          "special": True}])
+        path = self.write(config)
+        with contextlib.redirect_stdout(io.StringIO()):
+            generated = gen.generate(
+                path, self.dir / "generated" / "tok.h",
+                allow_in_vocab_special_added_tokens=True)
+        self.assertTrue(generated.is_file())
+
+    def test_non_special_added_token_remains_rejected_when_allowed(self):
+        config = tokenizer(vocab_extra={"<pad>": 259},
+                           added_tokens=[{"id": 259, "content": "<pad>",
+                                          "special": False}])
+        with self.assertRaisesRegex(SystemExit, "must be special"):
+            gen.build_asset(json.dumps(config).encode(),
+                            allow_in_vocab_special_added_tokens=True)
+
     def test_truncation_rejected(self):
         self.reject("truncation is configured", tokenizer(truncation={"max_length": 128}))
 

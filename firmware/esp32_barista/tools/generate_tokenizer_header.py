@@ -116,7 +116,7 @@ def read_tokenizer(path):
     return path.read_bytes()
 
 
-def check_encoding_contract(config):
+def check_encoding_contract(config, allow_in_vocab_special_added_tokens=False):
     """Reject any configuration the device encoder does not implement."""
     model = config.get("model") or {}
     if model.get("type") != "BPE":
@@ -129,11 +129,22 @@ def check_encoding_contract(config):
             raise SystemExit(
                 f"{field} is configured; the device encoder applies none"
             )
-    if config.get("added_tokens"):
-        raise SystemExit(
-            f"{len(config['added_tokens'])} added tokens are configured; the "
-            f"asset carries no table for them"
-        )
+    added_tokens = config.get("added_tokens")
+    if added_tokens:
+        if not allow_in_vocab_special_added_tokens:
+            raise SystemExit(
+                f"{len(added_tokens)} added tokens are configured; the "
+                f"asset carries no table for them"
+            )
+        vocab = model.get("vocab") or {}
+        for token in added_tokens:
+            if (not isinstance(token, dict) or token.get("special") is not True
+                    or not is_int(token.get("id"))
+                    or vocab.get(token.get("content")) != token["id"]):
+                raise SystemExit(
+                    "added tokens must be special entries already present in "
+                    "the BPE vocabulary"
+                )
 
     pre = config.get("pre_tokenizer")
     if not isinstance(pre, dict) or pre.get("type") != "ByteLevel":
@@ -204,10 +215,10 @@ def merge_pairs(merges):
     return pairs
 
 
-def build_asset(source):
+def build_asset(source, allow_in_vocab_special_added_tokens=False):
     """Pack the BTK1 asset from the raw bytes of tokenizer.json."""
     config = json.loads(source)
-    check_encoding_contract(config)
+    check_encoding_contract(config, allow_in_vocab_special_added_tokens)
 
     vocab = config["model"]["vocab"]
     merges = config["model"]["merges"]
@@ -299,7 +310,8 @@ def render(asset):
     return "\n".join(lines) + "\n"
 
 
-def generate(tokenizer_path, out_path, asset_path=None):
+def generate(tokenizer_path, out_path, asset_path=None,
+             allow_in_vocab_special_added_tokens=False):
     """Validate the tokenizer and write the header. Returns the path.
 
     asset_path additionally writes the raw BTK1 bytes, which is what the host
@@ -307,7 +319,8 @@ def generate(tokenizer_path, out_path, asset_path=None):
     recompiled against a header for every tokenizer.
     """
     source = read_tokenizer(tokenizer_path)
-    asset, active_vocab, merge_count, merge_base = build_asset(source)
+    asset, active_vocab, merge_count, merge_base = build_asset(
+        source, allow_in_vocab_special_added_tokens)
 
     out_path = Path(out_path)
     # Generated headers are ignored, so the directory is absent in a fresh clone.
@@ -333,8 +346,11 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help="header to write")
     ap.add_argument("--asset", default=None,
                     help="also write the raw BTK1 bytes here, for host checks")
+    ap.add_argument("--allow-in-vocab-special-added-tokens", action="store_true",
+                    help="allow special added tokens that already have their BPE id")
     args = ap.parse_args()
-    generate(args.tokenizer, args.out, args.asset)
+    generate(args.tokenizer, args.out, args.asset,
+             args.allow_in_vocab_special_added_tokens)
 
 
 if __name__ == "__main__":

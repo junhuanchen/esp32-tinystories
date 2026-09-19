@@ -30,6 +30,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
         COMMAND "${UV_EXECUTABLE}" run --no-project python
                 "${ROOT_DIR}/firmware/esp32_barista/tools/generate_tokenizer_header.py"
                 --tokenizer "${TOKENIZER}" --out "${ENCODER_HEADER}"
+                --allow-in-vocab-special-added-tokens
         DEPENDS "${TOKENIZER}"
                 "${ROOT_DIR}/firmware/esp32_tinystories/tools/generate_vocab.py"
                 "${ROOT_DIR}/firmware/esp32_barista/tools/generate_tokenizer_header.py"

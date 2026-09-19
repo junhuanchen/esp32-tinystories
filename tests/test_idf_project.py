@@ -35,6 +35,7 @@ class IdfProjectContract(unittest.TestCase):
         self.assertIn("if(NOT CMAKE_SCRIPT_MODE_FILE)", main)
         self.assertIn("generate_vocab.py", main)
         self.assertIn("generate_tokenizer_header.py", main)
+        self.assertIn("--allow-in-vocab-special-added-tokens", main)
         self.assertIn('esptool_py_flash_to_partition(flash "model"', project)
 
     def test_entrypoint_uses_usb_serial_jtag_not_arduino(self):

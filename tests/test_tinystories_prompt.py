@@ -41,6 +41,14 @@ class TinyStoriesPromptContract(unittest.TestCase):
         self.assertIn("last == '.' || last == '!' || last == '?'", self.sketch)
         self.assertIn("decoded >= ending_from && token_ends_sentence(tok)", self.sketch)
 
+    def test_generation_uses_reproducible_top_k_sampling(self):
+        self.assertIn("static const bool USE_TOP_K_SAMPLING = true", self.sketch)
+        self.assertIn("static const int SAMPLE_TOP_K = 32", self.sketch)
+        self.assertIn("static const float SAMPLE_TEMPERATURE = 0.8f", self.sketch)
+        self.assertIn("static uint32_t sample_rng_state", self.sketch)
+        self.assertIn("static int select_next_token()", self.sketch)
+        self.assertIn("tok = select_next_token()", self.sketch)
+
     def test_boot_reports_runtime_limits_and_parallelism(self):
         self.assertIn("S=%d", self.sketch)
         self.assertIn("esp_clk_cpu_freq()", self.sketch)

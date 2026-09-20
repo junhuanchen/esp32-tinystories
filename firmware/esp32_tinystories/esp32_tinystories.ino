@@ -19,6 +19,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_private/esp_clk.h"
+#include <math.h>
 
 // int8 activations, required by the staged int8 kernel. Not bit-exact against
 // the fp32 golden; verify.c must be built without this flag. Validation CE cost
@@ -43,6 +44,15 @@
 // the model's context window.
 static const int N_GENERATE = 508;
 static const int ENDING_WINDOW = 32;
+
+// Greedy decoding is repeatable but easily falls into local repetition loops on
+// a small model. Keep it available as a baseline, while the default samples
+// only among the 32 most likely next tokens. The fixed seed makes comparisons
+// between firmware builds reproducible after each boot.
+static const bool USE_TOP_K_SAMPLING = true;
+static const int SAMPLE_TOP_K = 32;
+static const float SAMPLE_TEMPERATURE = 0.8f;
+static uint32_t sample_rng_state = 0x6d2b79f5u;
 
 Model model;
 Scratch s;
@@ -177,6 +187,58 @@ static void emit(int tok) {
 #endif
 }
 
+static uint32_t sample_random_u32() {
+  uint32_t x = sample_rng_state;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  sample_rng_state = x;
+  return x;
+}
+
+// Select from the top logits without sorting the full vocabulary. The output
+// head already scans every class; this bounded insertion pass avoids a large
+// allocation or a full sort in PSRAM.
+static int select_next_token() {
+  if (!USE_TOP_K_SAMPLING) {
+    int best = 0;
+    for (int v = 1; v < model.out_vocab; v++)
+      if (s.logits[v] > s.logits[best]) best = v;
+    return best;
+  }
+
+  float values[SAMPLE_TOP_K];
+  int ids[SAMPLE_TOP_K];
+  for (int i = 0; i < SAMPLE_TOP_K; i++) {
+    values[i] = -INFINITY;
+    ids[i] = 0;
+  }
+  for (int v = 0; v < model.out_vocab; v++) {
+    float value = s.logits[v];
+    if (value <= values[SAMPLE_TOP_K - 1]) continue;
+    int i = SAMPLE_TOP_K - 1;
+    while (i > 0 && value > values[i - 1]) {
+      values[i] = values[i - 1];
+      ids[i] = ids[i - 1];
+      --i;
+    }
+    values[i] = value;
+    ids[i] = v;
+  }
+
+  float total = 0.0f;
+  for (int i = 0; i < SAMPLE_TOP_K; i++) {
+    values[i] = expf((values[i] - values[0]) / SAMPLE_TEMPERATURE);
+    total += values[i];
+  }
+  float target = ((sample_random_u32() >> 8) * (1.0f / 16777216.0f)) * total;
+  for (int i = 0; i < SAMPLE_TOP_K - 1; i++) {
+    if (target < values[i]) return ids[i];
+    target -= values[i];
+  }
+  return ids[SAMPLE_TOP_K - 1];
+}
+
 // The TinyStories model writes raw English UTF-8 bytes. Near the output limit,
 // stop after a token whose final byte closes a sentence instead of always
 // exhausting the context in the middle of one.
@@ -259,10 +321,7 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
   int ending_from = max_generate - ENDING_WINDOW;
   if (ending_from < 0) ending_from = 0;
   for (int step = 0; step < max_generate; step++) {
-    int best = 0; float bv = -1e30f;
-    for (int v = 0; v < model.out_vocab; v++)
-      if (s.logits[v] > bv) { bv = s.logits[v]; best = v; }
-    tok = best;
+    tok = select_next_token();
     emit(tok);
     blink((step & 1) ? 40 : 8);
 

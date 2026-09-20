@@ -47,12 +47,13 @@ static const int ENDING_WINDOW = 32;
 
 // Greedy decoding is repeatable but easily falls into local repetition loops on
 // a small model. Keep it available as a baseline, while the default samples
-// only among the 32 most likely next tokens. The fixed seed makes comparisons
+// only among the 16 most likely next tokens. The fixed seed makes comparisons
 // between firmware builds reproducible after each boot.
 static const bool USE_TOP_K_SAMPLING = true;
-static const int SAMPLE_TOP_K = 32;
-static const float SAMPLE_TEMPERATURE = 0.8f;
+static const int SAMPLE_TOP_K = 16;
+static const float SAMPLE_TEMPERATURE = 0.65f;
 static uint32_t sample_rng_state = 0x6d2b79f5u;
+static const int NGRAM_WINDOW = 32;
 
 Model model;
 Scratch s;
@@ -199,12 +200,49 @@ static uint32_t sample_random_u32() {
 // Select from the top logits without sorting the full vocabulary. The output
 // head already scans every class; this bounded insertion pass avoids a large
 // allocation or a full sort in PSRAM.
-static int select_next_token() {
+// Reject only a candidate that recreates an exact recent token trigram. Unlike
+// a token-wide penalty, frequent words remain available in new phrases.
+static int recent_trigram_blocks(const int *recent, int n_recent, int *blocked) {
+  if (n_recent < 3) return 0;
+  int first = recent[n_recent - 2];
+  int second = recent[n_recent - 1];
+  int n_blocked = 0;
+  for (int i = 0; i + 2 < n_recent; i++) {
+    if (recent[i] != first || recent[i + 1] != second) continue;
+    int tok = recent[i + 2];
+    bool seen = false;
+    for (int j = 0; j < n_blocked; j++)
+      if (blocked[j] == tok) { seen = true; break; }
+    if (!seen) blocked[n_blocked++] = tok;
+  }
+  return n_blocked;
+}
+
+static bool is_blocked_token(int tok, const int *blocked, int n_blocked) {
+  for (int i = 0; i < n_blocked; i++)
+    if (blocked[i] == tok) return true;
+  return false;
+}
+
+static void remember_token(int tok, int *recent, int *n_recent) {
+  if (*n_recent < NGRAM_WINDOW) {
+    recent[(*n_recent)++] = tok;
+    return;
+  }
+  memmove(recent, recent + 1, (NGRAM_WINDOW - 1) * sizeof(recent[0]));
+  recent[NGRAM_WINDOW - 1] = tok;
+}
+
+static int select_next_token(const int *recent, int n_recent) {
+  int blocked[NGRAM_WINDOW];
+  int n_blocked = recent_trigram_blocks(recent, n_recent, blocked);
   if (!USE_TOP_K_SAMPLING) {
-    int best = 0;
-    for (int v = 1; v < model.out_vocab; v++)
-      if (s.logits[v] > s.logits[best]) best = v;
-    return best;
+    int best = -1;
+    for (int v = 0; v < model.out_vocab; v++)
+      if (!is_blocked_token(v, blocked, n_blocked) &&
+          (best < 0 || s.logits[v] > s.logits[best]))
+        best = v;
+    return best >= 0 ? best : 0;
   }
 
   float values[SAMPLE_TOP_K];
@@ -214,6 +252,7 @@ static int select_next_token() {
     ids[i] = 0;
   }
   for (int v = 0; v < model.out_vocab; v++) {
+    if (is_blocked_token(v, blocked, n_blocked)) continue;
     float value = s.logits[v];
     if (value <= values[SAMPLE_TOP_K - 1]) continue;
     int i = SAMPLE_TOP_K - 1;
@@ -227,8 +266,9 @@ static int select_next_token() {
   }
 
   float total = 0.0f;
+  float peak = values[0];
   for (int i = 0; i < SAMPLE_TOP_K; i++) {
-    values[i] = expf((values[i] - values[0]) / SAMPLE_TEMPERATURE);
+    values[i] = expf((values[i] - peak) / SAMPLE_TEMPERATURE);
     total += values[i];
   }
   float target = ((sample_random_u32() >> 8) * (1.0f / 16777216.0f)) * total;
@@ -304,6 +344,8 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
 
   Serial.print(">>> ");
   int pos = 0, tok = 0;
+  int recent[NGRAM_WINDOW];
+  int n_recent = 0;
   int64_t decode_us = 0;
   int decoded = 0;
 
@@ -311,6 +353,7 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
     tok = prompt_ids[i];
     emit(tok);
     llm_forward(&model, tok, pos++, &s);
+    remember_token(tok, recent, &n_recent);
   }
 
   llm_profile_reset(&s);
@@ -321,12 +364,16 @@ static void generate(const uint16_t *prompt_ids, int n_prompt) {
   int ending_from = max_generate - ENDING_WINDOW;
   if (ending_from < 0) ending_from = 0;
   for (int step = 0; step < max_generate; step++) {
-    tok = select_next_token();
+    tok = select_next_token(recent, n_recent);
+    // The training stream places this special token between stories. Its decode
+    // span is empty, so stop here instead of silently starting a new story.
+    if (tok == VOCAB_EOT) break;
     emit(tok);
     blink((step & 1) ? 40 : 8);
 
     int64_t d0 = esp_timer_get_time();
     llm_forward(&model, tok, pos++, &s);
+    remember_token(tok, recent, &n_recent);
     decode_us += esp_timer_get_time() - d0;
     decoded++;
     if (decoded >= ending_from && token_ends_sentence(tok)) break;
@@ -390,6 +437,10 @@ void setup() {
   if (VOCAB_N != model.out_vocab) {
     Serial.printf("FATAL: tokenizer/model mismatch: vocab.h %d, model %d\n",
                   VOCAB_N, model.out_vocab);
+    return;
+  }
+  if (VOCAB_EOT < 0 || VOCAB_EOT >= model.out_vocab) {
+    Serial.printf("FATAL: invalid EOT token id %d\n", VOCAB_EOT);
     return;
   }
 

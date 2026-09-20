@@ -29,6 +29,9 @@ def main():
 
     tok = Tokenizer.from_file(str(TOK))  # rejects PathLike
     V = tok.get_vocab_size()
+    eot = tok.token_to_id("<|endoftext|>")
+    if eot is None or not 0 <= eot < V:
+        raise SystemExit("tokenizer has no valid <|endoftext|> token")
 
     # Raw bytes per token: decode single-id sequences. For the ASCII TinyStories
     # domain this reconstructs text exactly when pieces are concatenated.
@@ -46,6 +49,7 @@ def main():
                 "// token id -> raw UTF-8 bytes.\n")
         f.write("#ifndef VOCAB_H\n#define VOCAB_H\n")
         f.write(f"#define VOCAB_N {V}\n")
+        f.write(f"#define VOCAB_EOT {eot}\n")
         f.write(f"static const unsigned char VOCAB_BLOB[{len(blob)}] = {{\n")
         for i in range(0, len(blob), 20):
             f.write("  " + ",".join(str(b) for b in blob[i:i+20]) + ",\n")

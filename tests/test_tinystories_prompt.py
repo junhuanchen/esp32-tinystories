@@ -43,11 +43,24 @@ class TinyStoriesPromptContract(unittest.TestCase):
 
     def test_generation_uses_reproducible_top_k_sampling(self):
         self.assertIn("static const bool USE_TOP_K_SAMPLING = true", self.sketch)
-        self.assertIn("static const int SAMPLE_TOP_K = 32", self.sketch)
-        self.assertIn("static const float SAMPLE_TEMPERATURE = 0.8f", self.sketch)
+        self.assertIn("static const int SAMPLE_TOP_K = 16", self.sketch)
+        self.assertIn("static const float SAMPLE_TEMPERATURE = 0.65f", self.sketch)
+        self.assertIn("static const int NGRAM_WINDOW = 32", self.sketch)
         self.assertIn("static uint32_t sample_rng_state", self.sketch)
-        self.assertIn("static int select_next_token()", self.sketch)
-        self.assertIn("tok = select_next_token()", self.sketch)
+        self.assertIn("static int recent_trigram_blocks", self.sketch)
+        self.assertIn("static bool is_blocked_token", self.sketch)
+        self.assertIn("static int select_next_token(const int *recent", self.sketch)
+        self.assertIn("float peak = values[0]", self.sketch)
+        self.assertIn("values[i] - peak", self.sketch)
+        self.assertIn("tok = select_next_token(recent, n_recent)", self.sketch)
+
+    def test_generation_stops_at_the_tokenizer_eot(self):
+        generator = (ROOT / "firmware" / "esp32_tinystories" / "tools" /
+                     "generate_vocab.py").read_text(encoding="utf-8")
+        self.assertIn('tok.token_to_id("<|endoftext|>")', generator)
+        self.assertIn('f"#define VOCAB_EOT {eot}\\n"', generator)
+        self.assertIn("if (tok == VOCAB_EOT) break", self.sketch)
+        self.assertIn("invalid EOT token id", self.sketch)
 
     def test_boot_reports_runtime_limits_and_parallelism(self):
         self.assertIn("S=%d", self.sketch)

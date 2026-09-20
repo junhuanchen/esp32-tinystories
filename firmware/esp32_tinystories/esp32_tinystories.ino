@@ -18,6 +18,7 @@
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_private/esp_clk.h"
 
 // int8 activations, required by the staged int8 kernel. Not bit-exact against
 // the fp32 golden; verify.c must be built without this flag. Validation CE cost
@@ -303,9 +304,9 @@ void setup() {
 
   if (llm_load((const uint8_t *)base, &model)) { Serial.println("bad model magic"); return; }
   Cfg *c = &model.c;
-  Serial.printf("model: Vin=%d Vout=%d D=%d L=%d H=%d F=%d P=%d  (mapped %.1f MB)\n",
+  Serial.printf("model: Vin=%d Vout=%d D=%d L=%d H=%d F=%d P=%d S=%d  (mapped %.1f MB)\n",
                 c->vocab, model.out_vocab, c->dim, c->n_layers, c->n_heads,
-                c->ffn, c->ple_dim, part->size / 1e6);
+                c->ffn, c->ple_dim, c->seq_len, part->size / 1e6);
 
 #if USE_DISPLAY
   display_begin();
@@ -357,13 +358,18 @@ void setup() {
                 staged, psram_used / 1048576.0);
 
   main_h = xTaskGetCurrentTaskHandle();
+  int dual_core_active = 0;
   if (xTaskCreatePinnedToCore(worker_main, "mv", 4096, NULL, 2, &worker_h, 0) == pdPASS) {
     // After the worker exists: matvec_par notifies worker_h.
     model.layer_matvec = matvec_par;
     model.head_matvec  = matvec_par;
+    dual_core_active = 1;
   } else {
     Serial.println("dual-core worker failed; running single core");
   }
+  Serial.printf("runtime: cpu=%u MHz | seq=%d | dual-core=%s\n",
+                (unsigned)(esp_clk_cpu_freq() / 1000000), c->seq_len,
+                dual_core_active ? "on" : "off");
 
   // FNV-1a over the mapped image. scripts/deploy.sh prints the same value for
   // the file it flashed; the two must agree.

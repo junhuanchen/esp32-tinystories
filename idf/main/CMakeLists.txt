@@ -14,7 +14,12 @@ set(ENCODER_HEADER "${GENERATED_DIR}/tokenizer_encoder.h")
 
 idf_component_register(SRCS "main.cpp"
                        INCLUDE_DIRS "." "${CMAKE_CURRENT_BINARY_DIR}" "${ROOT_DIR}/runtime"
-                       REQUIRES esp_partition esp_timer esp_psram driver)
+                       REQUIRES esp_partition esp_timer esp_psram esp_hw_support driver)
+
+# The model's dense kernels are the device's dominant cost. ESP-IDF's
+# performance preset is applied project-wide; use the same -O3 level as the
+# published Arduino build for this inference component only.
+target_compile_options(${COMPONENT_LIB} PRIVATE -O3)
 
 # ESP-IDF reads every component once in CMake script mode to discover its
 # dependencies. Script mode cannot register build commands, so defer generated

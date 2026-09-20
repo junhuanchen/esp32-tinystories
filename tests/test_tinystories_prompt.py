@@ -41,6 +41,12 @@ class TinyStoriesPromptContract(unittest.TestCase):
         self.assertIn("last == '.' || last == '!' || last == '?'", self.sketch)
         self.assertIn("decoded >= ending_from && token_ends_sentence(tok)", self.sketch)
 
+    def test_boot_reports_runtime_limits_and_parallelism(self):
+        self.assertIn("S=%d", self.sketch)
+        self.assertIn("esp_clk_cpu_freq()", self.sketch)
+        self.assertIn("int dual_core_active = 0", self.sketch)
+        self.assertIn("dual-core=%s", self.sketch)
+
     def test_deploy_generates_the_asset_from_the_selected_tokenizer(self):
         self.assertIn("generate tokenizer encoder", self.deploy)
         self.assertIn("generate_tokenizer_header.py", self.deploy)

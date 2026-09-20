@@ -29,6 +29,14 @@ class IdfProjectContract(unittest.TestCase):
         self.assertIn("CONFIG_PARTITION_TABLE_CUSTOM=y", text)
         self.assertIn('CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"', text)
 
+    def test_sdkconfig_selects_the_performance_baseline(self):
+        defaults = (IDF / "sdkconfig.defaults").read_text(encoding="utf-8")
+        main = (IDF / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y", defaults)
+        self.assertIn("CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y", defaults)
+        self.assertIn("CONFIG_COMPILER_OPTIMIZATION_PERF=y", defaults)
+        self.assertIn("target_compile_options(${COMPONENT_LIB} PRIVATE -O3)", main)
+
     def test_build_generates_headers_and_flashes_model(self):
         main = (IDF / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
         project = (IDF / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -44,6 +52,15 @@ class IdfProjectContract(unittest.TestCase):
         self.assertIn("if (data == nullptr || length == 0) return 0;", text)
         self.assertIn('extern "C" void app_main(void)', text)
         self.assertNotIn("#include <Arduino.h>", text)
+
+    def test_firmware_uses_the_idf_cpu_clock_api(self):
+        sketch = (ROOT / "firmware" / "esp32_tinystories" /
+                  "esp32_tinystories.ino").read_text(encoding="utf-8")
+        main = (IDF / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn('#include "esp_private/esp_clk.h"', sketch)
+        self.assertIn("esp_clk_cpu_freq()", sketch)
+        self.assertNotIn("getCpuFreqMHz()", sketch)
+        self.assertIn("esp_hw_support", main)
 
     def test_build_script_makes_flashing_explicit(self):
         text = BUILD.read_text(encoding="utf-8")
